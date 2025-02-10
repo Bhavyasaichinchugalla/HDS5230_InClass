@@ -1,0 +1,79 @@
+---
+title: "week 3 rmd"
+author: "Bhavya sai chinchugalla"
+date: "2025-02-6"
+output: html_document
+---
+
+
+```{r}
+# Load required libraries
+library(geosphere)
+library(microbenchmark)
+```
+
+```{r}
+# Read in the data
+df <- read_excel("clinics.xls")
+```
+
+```{r}
+# Convert latitude and longitude to numeric
+df$locLat <- as.numeric(df$locLat)
+df$locLong <- as.numeric(df$locLong)
+```
+
+```{r}
+# Define Haversine function
+haversine <- function(lat1, lon1, lat2, lon2) {
+  distHaversine(c(lon1, lat1), c(lon2, lat2)) / 1609.34
+}
+```
+
+```{r}
+# For-loop approach
+haversine_loop <- function(df) {
+  distance_list <- numeric(nrow(df))
+  for (i in 1:nrow(df)) {
+    distance_list[i] <- haversine(40.671, -73.985, df$locLat[i], df$locLong[i])
+  }
+  return(distance_list)
+}
+```
+
+
+```{r}
+# Apply approach
+haversine_apply <- function(df) {
+  df$distance <- apply(df, 1, function(row) {
+    haversine(40.671, -73.985, as.numeric(row["locLat"]), as.numeric(row["locLong"]))
+  })
+  return(df$distance)
+}
+```
+
+
+```{r}
+# Vectorized approach using geosphere functions
+haversine_vectorized <- function(df) {
+  return(distHaversine(matrix(c(df$locLong, df$locLat), ncol=2),
+                       matrix(c(rep(-73.985, nrow(df)), rep(40.671, nrow(df))), ncol=2)) / 1609.34)
+}
+```
+
+
+```{r}
+# Profile the three methods
+benchmark_results <- microbenchmark(
+  loop = haversine_loop(df),
+  apply = haversine_apply(df),
+  vectorized = haversine_vectorized(df),
+  times = 10
+)
+```
+
+
+```{r}
+# Print benchmark results
+print(benchmark_results)
+```
