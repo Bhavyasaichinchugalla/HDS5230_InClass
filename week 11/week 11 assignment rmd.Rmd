@@ -1,0 +1,201 @@
+---
+title: "week 11"
+author: "Bhavya sai chinchugalla"
+date: "2025-04-24"
+output: html_document
+---
+
+
+
+```{r}
+library(caret)
+library(ggplot2)
+library(lattice)
+library(xgboost)
+library(dplyr)
+library(mlbench)
+```
+
+
+
+```{r}
+
+# Load Dataset (Pima Indians Diabetes)
+data(PimaIndiansDiabetes2)
+ds <- na.omit(PimaIndiansDiabetes2)  # Remove NA rows
+
+# Check dataset
+str(ds)
+
+```
+The dataset contains 392 complete observations with 8 numeric predictor variables (pregnant, glucose, pressure, triceps, insulin, mass, pedigree, and age) and 1 categorical outcome variable, diabetes, indicating either a negative or positive diabetes diagnosis. This structure is suitable for fitting a logistic regression model, where predictors are used to model the probability of diabetes. It also provides the basis for bootstrapping predictors individually and generating new outcomes for machine learning experiments like XGBoost training.
+
+
+```{r}
+# Fit logistic regression model
+logmodel <- glm(diabetes ~ ., data = ds, family = "binomial")
+
+# Define function to generate bootstrapped dataset
+generate_bootstrapped_data <- function(sz) {
+  set.seed(123)  # Reproducibility
+  
+  predictors <- setdiff(names(ds), "diabetes")  # Exclude outcome
+  
+  # Bootstrap each predictor independently
+  dfdata <- lapply(predictors, function(colname) {
+    sample(ds[[colname]], size = sz, replace = TRUE)
+  }) %>%
+    as.data.frame()
+  
+  names(dfdata) <- predictors
+  
+  # Predict outcomes using logistic model
+  probs <- predict(logmodel, newdata = dfdata, type = "response")
+  dfdata$outcome <- ifelse(probs > 0.5, 1, 0)
+  
+  return(dfdata)
+}
+
+```
+
+
+
+
+```{r}
+# Load libraries for XGBoost
+library(mlbench)
+library(xgboost)
+library(caret)
+library(dplyr)
+library(magrittr)  # <-- add this!
+
+
+# Dataset sizes to test
+sizes <- c(100, 1000, 10000, 100000, 1000000)
+
+# Initialize results storage
+results <- data.frame(
+  DatasetSize = integer(),
+  MeanAccuracy = numeric(),
+  TimeTakenSeconds = numeric()
+)
+
+# Loop through each size
+for (sz in sizes) {
+  cat("Processing dataset size:", sz, "\n")
+  
+  df <- generate_bootstrapped_data(sz)
+  X <- as.matrix(df[, !(names(df) %in% "outcome")])
+  y <- df$outcome
+  
+  dtrain <- xgb.DMatrix(data = X, label = y)
+  
+  params <- list(
+    objective = "binary:logistic",
+    eval_metric = "error"
+  )
+  
+  start_time <- Sys.time()
+  cv_model <- xgb.cv(
+    params = params,
+    data = dtrain,
+    nrounds = 50,
+    nfold = 5,
+    verbose = 0,
+    early_stopping_rounds = 10
+  )
+  end_time <- Sys.time()
+  
+  best_accuracy <- 1 - min(cv_model$evaluation_log$test_error_mean)
+  time_taken <- as.numeric(difftime(end_time, start_time, units = "secs"))
+  
+  results <- rbind(results, data.frame(
+    DatasetSize = sz,
+    MeanAccuracy = round(best_accuracy, 2),
+    TimeTakenSeconds = round(time_taken, 2)
+  ))
+}
+
+# Print Final Results
+print(results)
+
+```
+The XGBoost model was evaluated on bootstrapped datasets of increasing sizes in R, using direct xgboost::xgb.cv with 5-fold cross-validation. As the dataset size increased from 100 to 1,000,000 rows, the model’s mean accuracy gradually improved from 0.94 to 0.99. This trend demonstrates that larger datasets helped the model generalize better by reducing variance. In terms of computational time, model training scaled predictably, increasing from 0.14 seconds at 100 rows to approximately 49 seconds for 1 million rows. Overall, the results confirm that XGBoost in R performs accurately and scales efficiently with increasing dataset size.
+
+
+```{r}
+# Step 1: Load Dataset
+data(PimaIndiansDiabetes2)
+ds <- na.omit(PimaIndiansDiabetes2)  # Remove missing values
+
+# Step 2: Fit Logistic Regression Model
+logmodel <- glm(diabetes ~ ., data = ds, family = "binomial")
+
+# Step 3: Function to Generate Bootstrapped Dataset
+generate_bootstrapped_data <- function(size) {
+  set.seed(123)
+  predictors <- setdiff(names(ds), "diabetes")
+  
+  boot_data <- lapply(predictors, function(colname) {
+    sample(ds[[colname]], size = size, replace = TRUE)
+  }) %>%
+    as.data.frame()
+  
+  names(boot_data) <- predictors
+  
+  probs <- predict(logmodel, newdata = boot_data, type = "response")
+  
+  boot_data$outcome <- ifelse(probs > 0.5, "pos", "neg")  # caret expects factors
+  boot_data$outcome <- as.factor(boot_data$outcome)
+  
+  return(boot_data)
+}
+
+# Step 4: Define Sizes
+sizes <- c(100, 1000, 10000, 100000, 1000000)
+results_caret <- data.frame()
+
+# Step 5: Loop Through Each Size and Train Model
+for (sz in sizes) {
+  cat("Processing dataset size:", sz, "\n")
+  
+  boot_data <- generate_bootstrapped_data(sz)
+  
+  X <- boot_data[, !(names(boot_data) %in% "outcome")]
+  y <- boot_data$outcome
+  
+  train_control <- trainControl(
+    method = "cv",
+    number = 5,
+    verboseIter = FALSE
+  )
+  
+  start_time <- Sys.time()
+  
+  model_caret <- train(
+    x = X,
+    y = y,
+    method = "xgbTree",
+    trControl = train_control,
+    tuneLength = 1  # Keep it 1 to make it faster
+  )
+  
+  end_time <- Sys.time()
+  
+  mean_accuracy <- max(model_caret$results$Accuracy)
+  elapsed_time <- as.numeric(difftime(end_time, start_time, units = "secs"))
+  
+  results_caret <- rbind(results_caret, data.frame(
+    DatasetSize = sz,
+    MeanAccuracy = round(mean_accuracy, 2),
+    TimeTakenSeconds = round(elapsed_time, 2)
+  ))
+}
+
+# Step 6: Print Final Results
+print(results_caret)
+
+```
+The caret-based XGBoost model in R maintained a consistent mean accuracy of approximately 0.95 across all dataset sizes.
+However, training time increased significantly as the dataset grew, from less than 1 second at 1,000 rows to nearly 100 seconds for 1 million rows.
+This indicates that while predictive performance remained stable, caret-based modeling introduced considerable computational overhead, making it less efficient for very large datasets.
